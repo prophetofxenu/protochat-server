@@ -1,4 +1,3 @@
-import asyncio
 import struct
 import os
 
@@ -9,6 +8,14 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
 
 class HandshakeFailureException(Exception):
+    pass
+
+
+class SocketNotConnectedException(Exception):
+    pass
+
+
+class AuthenticationFailureException(Exception):
     pass
 
 
@@ -30,10 +37,10 @@ class SocketHandler:
         self.chacha = None
         self.nonce = None
 
-    def perform_handshake(self):
+    async def perform_handshake(self):
         ## exchange ECDH key
         # create private key
-        private_key = ec.generate_private_key(ec.SECIP384R1())
+        private_key = ec.generate_private_key(ec.SECP384R1())
         # get associated public key
         public_key = private_key.public_key()
         # send public x and y coordinates
@@ -66,9 +73,9 @@ class SocketHandler:
         ## derive stream key
         hkdf = HKDF(
                 algorithm=hashes.SHA256(),
-                length=STREAM_KEY_LEN,
-                salt=SALT,
-                info=INFO
+                length=type(self).STREAM_KEY_LEN,
+                salt=type(self).SALT,
+                info=type(self).INFO
         )
         # get a suitable key for cipher
         stream_key = hkdf.derive(shared_key)
@@ -76,21 +83,44 @@ class SocketHandler:
         ## setup stream cipher
         chacha = ChaCha20Poly1305(stream_key)
         # create and share nonce
-        nonce = os.urandom(IV_LEN)
-        writer.write(nonce)
+        nonce = os.urandom(type(self).IV_LEN)
+        self.w.write(nonce)
 
         ## verify
-        msg_ct = await reader.read(16)
-        msg_mac = await reader.read(MAC_LEN)
-        msg = chacha.decrypt(nonce, msg_ct + msg_mac, HEADER)
-        if msg != VERIFY_MSG:
+        msg_ct = await self.r.read(16)
+        msg_mac = await self.r.read(type(self).MAC_LEN)
+        msg = chacha.decrypt(nonce, msg_ct + msg_mac, type(self).HEADER)
+        if msg != type(self).VERIFY_MSG:
             raise HandshakeErrorException("Unable to verify")
 
         ## confirm
-        msg = chacha.encrypt(nonce, CONFIRM_MSG, HEADER)
-        self.w.write(msg[:-MAC_LEN])
-        self.w.write(msg[-MAC_LEN:])
+        msg = chacha.encrypt(nonce, type(self).CONFIRM_MSG, type(self).HEADER)
+        self.w.write(msg[:-type(self).MAC_LEN])
+        self.w.write(msg[-type(self).MAC_LEN:])
 
         self.chacha = chacha
         self.nonce = nonce
+
+    def send(self, byte_arr):
+        if self.chacha is None:
+            raise SocketNotConnectedException()
+        msg_len = struct.pack('<i', len(byte_arr))
+        msg_len = self.chacha.encrypt(self.nonce, msg_len, type(self).HEADER)
+        self.w.write(msg_len)
+        ct = self.chacha.encrypt(self.nonce, byte_arr, type(self).HEADER)
+        self.w.write(ct)
+
+    def send_nohelp(self, byte_arr):
+        if self.chacha is None:
+            raise SocketNotConnectedException()
+        ct = self.chacha.encrypt(self.nonce, byte_arr, type(self).HEADER)
+        self.w.write(ct)
+
+    async def receive(self, n):
+        if self.chacha is None:
+            raise SocketNotConnectedException()
+        msg_ct = await self.r.read(n)
+        mac = await self.r.read(type(self).MAC_LEN)
+        pt = self.chacha.decrypt(self.nonce, msg_ct + mac, type(self).HEADER)
+        return pt
 
