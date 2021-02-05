@@ -13,6 +13,25 @@ class User:
         cls._db_cnx = cnx
 
 
+    @classmethod
+    def get_by_id(cls, id):
+        cursor = cls._db_cnx.cursor()
+        cursor.execute("SELECT * FROM users WHERE id=%s;", (id,))
+        t = cursor.fetchone()
+        cursor.close()
+        if t is None:
+            return None
+        u = User()
+        u.id = t[0]
+        u.crypt_key = t[1]
+        u.username = t[2]
+        u.bio = t[3]
+        u.profile_pic_id = t[4]
+        u.join_date = t[5]
+        u.last_seen = t[6]
+        return u
+
+
     def __init__(self):
         self._id = pcutils.hex_id(8)
         self._username = None
@@ -83,8 +102,7 @@ class User:
     def valid(self):
         return (self._id is not None and self._username is not None and
             self._crypt_key is not None and self._bio is not None and
-            self._profile_pic_id is not None and self._join_date is not None and
-            self._last_seen is not None)
+            self._join_date is not None and self._last_seen is not None)
 
 
     def insert(self):
@@ -93,7 +111,7 @@ class User:
                     self._profile_pic_id, self._join_date, self._last_seen)
             cursor = type(self)._db_cnx.cursor()
             cursor.execute("INSERT INTO users \
-                    (id, username, decryption_key, bio, profile_pic_id, join_date, last_seen) \
+                    (id, username, crypt_key, bio, profile_pic_id, join_date, last_seen) \
                     VALUES (%s, %s, %s, %s, %s, %s, %s)", t)
             type(self)._db_cnx.commit()
             return True
